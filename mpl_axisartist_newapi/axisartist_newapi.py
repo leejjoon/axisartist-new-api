@@ -546,8 +546,8 @@ class Axes(_Axes):
         return ax
 
 from mpl_toolkits.axes_grid1.parasite_axes import (
-    ParasiteAxesBase, host_axes_class_factory, parasite_axes_class_factory,
-    parasite_axes_auxtrans_class_factory, subplot_class_factory)
+    ParasiteAxesBase, host_axes_class_factory, parasite_axes_class_factory)
+#     parasite_axes_auxtrans_class_factory, subplot_class_factory)
 
 
 # from mpl_toolkits.axes_grid1.parasite_axes import (
@@ -626,9 +626,16 @@ class FloatingParasiteAxes(ParasiteAxes):
         for loc, v in zip(["bottom", "top"], [bottom, top]):
             self.axis[loc].get_helper().value = v
 
+    def adjust_host_axes_lim(self, host_ax):
+        bbox = self.patch.get_path().get_extents(
+            # First transform to pixel coords, then to parent data coords.
+            self.patch.get_transform() - host_ax.transData)
+        bbox = bbox.expanded(1.02, 1.02)
+        host_ax.set_xlim(bbox.xmin, bbox.xmax)
+        host_ax.set_ylim(bbox.ymin, bbox.ymax)
 
-# def test1():
-if True:
+
+def test1():
     import matplotlib.pyplot as plt
     plt.clf()
     ax = plt.subplot(111, axes_class=HostAxes, aspect=1)
@@ -726,11 +733,12 @@ def test2():
 
     from matplotlib.transforms import Affine2D
     # We define transform from the original axes to the rotated one.
-    transform_to_rotated = (Affine2D()
-                 .translate(0, 0)
-                 .rotate_deg(15)
-                 .translate(0, 0)
-                 .scale(1, 1) # to reduce the height of the histogram
+    transform_to_rotated = (
+        Affine2D()
+        .translate(0, 0)
+        .rotate_deg(15)
+        .translate(0, 0)
+        .scale(1, 1) # to reduce the height of the histogram
     )
 
     transform_from_rotated = transform_to_rotated.inverted()
@@ -786,3 +794,196 @@ def test2():
 
     # ax_floating.plot([0., 2.5], [0., 2.5], clip_on=False)
 
+    ax_floating.axis["bottom"].label.set_text("Test")
+
+def test3():
+    import matplotlib.pyplot as plt
+    plt.clf()
+    ax = plt.subplot(111, axes_class=HostAxes, aspect=1)
+
+    from matplotlib.transforms import Affine2D
+    # We define transform from the original axes to the rotated one.
+    transform_to_rotated = (Affine2D()
+                 .skew_deg(0, -30)
+                 .translate(0, 0)
+                 .scale(1, 1) # to reduce the height of the histogram
+    )
+
+    transform_from_rotated = transform_to_rotated.inverted()
+
+    proj_name = "rotated"
+    ax.register_projection(proj_name,
+                           transform_from_rotated, grid_helper=None)
+
+    # ax.add_twin(name="rotaed", projection=None)
+
+    # ax.select_visible_projection(proj_name) # to replace ticks and ticklabels.
+    # ax.grid(True)
+
+    ax_rotated = ax.get_projected_axes(proj_name)
+    ax_rotated.locator_params(steps=[1, 2, 5, 10], nbins=10)
+
+    ax_rotated.grid(color="r", alpha=0.2, zorder=0)
+
+
+    ax.plot([0], [0], "bo", ms=10, mfc="none")
+    ax_rotated.plot([0, 0], [0, 1], "ro")
+
+    extremes = [0, 1.5, 1., 2.5]
+    ax_floating = ax.get_floating_axes(proj_name, extremes)
+
+    # ax_floating.locator_params(steps=[1., 5, 10], nbins=100)
+
+
+    # gh = ax_rotated.get_grid_helper()
+    # l = gh.grid_finder.grid_locator1
+    # l.set_params(steps=[1., 5,10])
+    # l.set_params(nbins=10)
+    # l = gh.grid_finder.grid_locator2
+    # l.set_params(steps=[1., 5, 10])
+    # l.set_params(nbins=10)
+
+    # Are tick locations cached for same axes data limits? If xlim ylim is
+    # changed early in the code, the above set_params is reflected only for the
+    # floating axes, not for the rotated axes.
+    ax.set_xlim(-0.5, 3)
+    ax.set_ylim(-0.5, 2.5)
+
+    ax.set_aspect(1)
+
+    # ax_floating.plot([0., 2], [0., 2.])
+    # f1 = ax.fill_between(x, y1=y)
+    # if True:
+    #     from mpl_visual_context.image_box_effect import BboxImagePathEffect
+    #     pe_f1 = BboxImagePathEffect("vertical", coords=f1)
+    #     f1.set_path_effects([pe_f1])
+
+
+    # for the floating axes, it would be better to have a separate grid_helper
+    # instance so that the params does not affect other axes. For now, this
+    # will override previous locator_params on the ax_rotated.
+    ax_floating.locator_params(nbins=5)
+    ax_floating.update_boundary(0, 2, 0, 2)
+    # ax_floating.patch.set_visible(True)
+
+    # ax_floating.plot([0., 2.5], [0., 2.5], clip_on=False)
+
+
+    f1 = ax_floating.fill_between([0., 2], [0., 2.])
+    im = ax_floating.imshow(np.arange(10).reshape((10, 1)), extent=[0, 2, 0, 2],
+                            origin="lower", interpolation="bilinear")
+    # im.remove()
+
+    # from mpl_visual_context.image_box_effect import BboxImageEffect
+    # im.axes = ax_floating
+    # f1.set_path_effects([BboxImageEffect(im)])
+
+def test4():
+# if True:
+    import matplotlib.pyplot as plt
+    plt.clf()
+    ax = plt.subplot(111, axes_class=HostAxes, aspect="auto")
+
+    from matplotlib.transforms import Affine2D
+    # We define transform from the original axes to the rotated one.
+    transform_to_rotated = (Affine2D()
+                 .skew_deg(0, -30)
+                 .translate(0, 0)
+                 .scale(1, 1) # to reduce the height of the histogram
+    )
+
+    transform_from_rotated = transform_to_rotated.inverted()
+
+    proj_name = "rotated"
+    ax.register_projection(proj_name,
+                           transform_from_rotated, grid_helper=None)
+
+    # ax.add_twin(name="rotaed", projection=None)
+
+    # ax.select_visible_projection(proj_name) # to replace ticks and ticklabels.
+    # ax.grid(True)
+
+    ax_rotated = ax.get_projected_axes(proj_name)
+    ax_rotated.grid(color="r", alpha=0.2, zorder=0)
+
+
+    f1 = ax_rotated.fill_between([0., 1, 2], [0., 3, 2.])
+    # im = ax_rotated.imshow(np.arange(10).reshape((10, 1)), extent=[0, 2, 0, 3],
+    #                        origin="lower", interpolation="bilinear")
+    #  f1.set_path_effects([ImageClipEffect(im, remove_from_axes=True)])
+
+    # im.remove()
+    # im.axes = ax_rotated
+
+    from mpl_visual_context.image_box_effect import GradientEffect
+
+    f1.set_path_effects([GradientEffect("up", f1, alpha="up")])
+
+    ax.set(xlim=(0, 3), ylim=(0, 4))
+
+    plt.show()
+
+# def test5():
+if True:
+    from matplotlib.transforms import Affine2D
+    # import mpl_toolkits.axisartist.floating_axes as floating_axes
+    import numpy as np
+    from mpl_toolkits.axisartist.grid_finder import MaxNLocator
+    import matplotlib.pyplot as plt
+
+    fig = plt.figure(figsize=(4, 4), num=2)
+    fig.clf()
+    ax = fig.add_subplot(111, axes_class=HostAxes, aspect=1)
+
+    tr_translate = Affine2D().translate(0, 0)
+    tr_scale = Affine2D().scale(1, 1)
+
+    # tr_ = Affine2D().rotate_deg(-45) + tr_scale + tr_translate 
+    # tr = Affine2D().translate(-x1, -y1).scale(1/dx, 1/dy).rotate_deg(45)
+    tr = tr_translate + tr_scale + Affine2D().rotate_deg(45)
+
+    proj_name = "rotated"
+    ax.register_projection(proj_name,
+                           tr, grid_helper=None)
+
+    # ax_rotated = ax.get_projected_axes(proj_name)
+    # ax_rotated.grid(color="r", alpha=0.2, zorder=0)
+
+
+
+    extremes = [0, 1, 0, 1]
+    rot_ax = ax.get_floating_axes(proj_name, extremes)
+
+    def update_lim(x1, x2, y1, y2):
+        dx = x2 - x1
+        dy = y2 - y1
+
+        tr_translate.clear().translate(-x1, -y1)
+        tr_scale.clear().scale(1/dx, 1/dy)
+
+        rot_ax.update_boundary(x1, x2, y1, y2)
+        # tr = tr_.inverted()
+
+        fig.canvas.draw_idle()
+
+    # ax.set_xlim(-0.7, 0.7)
+    # ax.set_ylim(0., 1.4)
+
+    rot_ax.axis['bottom'].major_ticklabels.set(rotation=-45, ha='left', va='top')
+    rot_ax.axis['bottom'].label.set(text="Variable A",
+                                    rotation=-45, ha='left', va='top')
+    rot_ax.axis['left'].major_ticklabels.set(rotation=45, ha='right', va='top')
+    rot_ax.axis['left'].label.set(text="Variable B",
+                                  rotation=45, ha='right', va='top')
+
+    ax.axis[:].set_visible(False)
+    ax.patch.set_visible(False)
+
+    rot_ax.adjust_host_axes_lim(ax)
+
+    x1, x2 = 3, 4
+    y1, y2 = 1, 5
+    update_lim(x1, x2, y1, y2)
+
+    rot_ax.scatter(np.random.rand(10, 1)*(x2-x1)+x1,
+                   np.random.rand(10, 1)*(y2-y1)+y1)
