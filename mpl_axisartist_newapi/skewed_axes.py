@@ -62,6 +62,7 @@ class SkewTransform(Affine2D):
         self.clear()
         self.scale(sx0/sx, sy0/sy).skew_deg(-deg_x, deg_y).translate(rx, ry)
 
+
 def get_skew_transform(rx, ry, sx=1, sy=1):
     # get Affined transform from a skewed box defined by (ry, r2) to the
     # transAxes.
@@ -273,6 +274,20 @@ class SkewedAxes(_Axes):
     def set_xlim(self, *kl, **kwargs):
         super().set_xlim(*kl, **kwargs)
 
+    def make_square(self):
+        x1, x2 = self.get_xlim()
+        y1, y2 = self.get_ylim()
+        dx = abs(x2 - x1)
+        dy = abs(y2 - y1)
+        if dx > dy:
+            x1 = 0.5*(x1 + x2) - 0.5*(x2 - x1)*dy/dx
+            x2 = 0.5*(x1 + x2) - 0.5*(x1 - x2)*dy/dx
+            self.set_xlim(x1, x2)
+        else:
+            y1 = 0.5*(y1 + y2) - 0.5*(y2 - y1)*dx/dy
+            y2 = 0.5*(y1 + y2) - 0.5*(y1 - y2)*dx/dy
+            self.set_ylim(y1, y2)
+
 
 if True:
     from mpl_toolkits.axisartist.grid_helper_curvelinear import (
@@ -283,7 +298,7 @@ if True:
     # def inv_tr(x, y): return x, y + x
 
     rx, ry = 0.5, 0.5 # for transform
-    rx1, ry2 = 0.8, 0.2 # for axes area
+    rx1, ry2 = 0.5, 0.5 # for axes area
     tr = get_skew_transform(rx, ry, sx=2, sy=1)
     # inv_tr = tr.inverted()
     # tr = Affine2D()
@@ -302,8 +317,8 @@ if True:
     ax1 = fig.add_subplot(1, 1, 1, axes_class=HostAxes, grid_helper=grid_helper)
     ax1.set_aspect(1)
     ax1.grid(True)
-    ax1.axis[:].major_ticks.set_tickdir("out")
-    ax1.axis[:].major_ticks.set_tick_orientation("parallel")
+    # ax1.axis[:].major_ticks.set_tickdir("out")
+    # ax1.axis[:].major_ticks.set_tick_orientation("parallel")
 
     # ax1.set_ylim(0, 2)
     tr.update_scale(1, 1)
@@ -313,3 +328,5 @@ if True:
     # ax2.plot([0, 1, 2, 3], [0, 1, 2, 3], "o")
 
     plt.show()
+
+

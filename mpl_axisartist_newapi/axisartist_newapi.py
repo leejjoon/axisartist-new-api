@@ -1,15 +1,18 @@
 import numpy as np
 
+import matplotlib as mpl
+
 from matplotlib import _api
 from mpl_toolkits.axes_grid1 import mpl_axes
 # from mpl_toolkits.axisartist.axislines import (Axes as _Axes,
 #                                                GridHelperRectlinear,
 #                                                GridHelperCurveLinear)
-from mpl_toolkits.axisartist.axis_artist import AxisArtist
+from mpl_toolkits.axisartist.axis_artist import (AxisArtist as _AxisArtist)
 from mpl_toolkits.axisartist import (
     Axes as _Axes,
     GridHelperRectlinear,
-    GridHelperCurveLinear as _GridHelperCurveLinear
+    GridHelperCurveLinear as _GridHelperCurveLinear,
+    GridlinesCollection
 )
 
 from mpl_toolkits.axisartist.grid_helper_curvelinear import (
@@ -20,14 +23,17 @@ from mpl_toolkits.axisartist.grid_helper_curvelinear import (
 # pixel coordinates. Thus correct values are returned even if aspect is not 1.
 # This is not the case for fixed axis.
 
-
 def measure_local_grid_angles():
     pass
 
 class FloatingAxisArtistHelper(_FloatingAxisArtistHelper):
     def __init__(self, *kl, **kw):
         self._extreme_mode = kw.pop("extreme_mode", "host")
+        self._ticklabel_angle_mode = kw.pop("ticklabel_angle_mode", "axis")
         super().__init__(*kl, **kw)
+
+    def _get_host_transfrom(self, host):
+        return host.transData
 
     def _filter_levels(self, v_min, v_max, levs, factor):
         # we update the min, max and levels using the local extremes.
@@ -153,7 +159,7 @@ class FloatingAxisArtistHelper(_FloatingAxisArtistHelper):
             yy0 = np.full_like(xx0, self.value)
 
         def transform_xy(x, y):
-            trf = grid_finder.get_transform() + axes.transData
+            trf = grid_finder.get_transform() + self._get_host_transfrom(axes)
             return trf.transform(np.column_stack([x, y])).T
 
         # xx1, xx2 are the locations of the ticks in figure coordinates.
@@ -188,7 +194,10 @@ class FloatingAxisArtistHelper(_FloatingAxisArtistHelper):
         xx2, yy2 = transform_xy(xx0, yy0)
 
         # to measure angle normal
-        xx2a, yy2a = transform_xy(xx0+dx1, yy0+dy1)
+        if self._ticklabel_angle_mode != "axis":
+            xx2a, yy2a = transform_xy(xx0-dx1, yy0+dy1)
+        else:
+            xx2a, yy2a = transform_xy(xx0+dx1, yy0+dy1)
 
         # to measure angle tangent
         xx2b, yy2b = transform_xy(xx0+dx2, yy0+dy2)
@@ -197,7 +206,11 @@ class FloatingAxisArtistHelper(_FloatingAxisArtistHelper):
             dd = np.arctan2(yy2a-yy2, xx2a-xx2)  # angle normal
             dd2 = np.arctan2(yy2b-yy2, xx2b-xx2)  # angle tangent
             mm = (yy2a == yy2) & (xx2a == xx2)  # mask where dd not defined
+
             dd[mm] = dd2[mm] + np.pi / 2
+
+            if self._ticklabel_angle_mode != "axis":
+                dd2 = dd - 0.5*np.pi
 
             tick_to_axes = self.get_tick_transform(axes) - axes.transAxes
             for x, y, d, d2, lab in zip(xx1, yy1, dd, dd2, labels):
@@ -208,6 +221,11 @@ class FloatingAxisArtistHelper(_FloatingAxisArtistHelper):
                     yield [x, y], d1, d2, lab
 
         return f1(), iter([])
+
+
+class AxisArtist(_AxisArtist):
+    def set_lim(self, e1, e2):
+        self.get_helper().set_extremes(e1, e2) # limit its extents.
 
 
 class GridHelperCurveLinear(_GridHelperCurveLinear):
@@ -243,6 +261,7 @@ class GridHelperCurveLinear(_GridHelperCurveLinear):
                           axes=None,
                           axis_direction="bottom",
                           extreme_mode="host",
+                          ticklabel_angle_mode="axis",
                           ):
 
         if axes is None:
@@ -250,7 +269,9 @@ class GridHelperCurveLinear(_GridHelperCurveLinear):
 
         _helper = FloatingAxisArtistHelper(
             self, nth_coord, value, axis_direction,
-            extreme_mode=extreme_mode)
+            extreme_mode=extreme_mode,
+            ticklabel_angle_mode=ticklabel_angle_mode,
+        )
         # axis_direction parameter to the FloatingAxisArtistHelper has no
         # effct.
 
@@ -260,6 +281,30 @@ class GridHelperCurveLinear(_GridHelperCurveLinear):
         axisline.line.set_clip_box(axisline.axes.bbox)
 
         return axisline
+
+    # this method was deprecated in mpl36 and removed in mpl3.7. I simply
+    # copied it.
+    def new_gridlines(self, ax):
+        """
+        Create and return a new GridlineCollection instance.
+
+        *which* : "major" or "minor"
+        *axis* : "both", "x" or "y"
+
+        """
+        gridlines = GridlinesCollection(
+            None, transform=ax.transData, colors=mpl.rcParams['grid.color'],
+            linestyles=mpl.rcParams['grid.linestyle'],
+            linewidths=mpl.rcParams['grid.linewidth'])
+        ax._set_artist_props(gridlines)
+        gridlines.set_grid_helper(self)
+
+        ax.axes._set_artist_props(gridlines)
+        # gridlines.set_clip_path(self.axes.patch)
+        # set_clip_path need to be deferred after Axes.cla is completed.
+        # It is done inside the cla.
+
+        return gridlines
 
     def copy(self,
              extreme_finder=None,
@@ -281,7 +326,8 @@ class GridHelperCurveLinear(_GridHelperCurveLinear):
         # if tick_formatter2 is None:
         #     tick_formatter2 = grid_finder.tick_formatter2
 
-        return type(self)(self._aux_trans,
+        aux_trans = self.grid_finder.get_transform()
+        return type(self)(aux_trans,
                           extreme_finder=extreme_finder,
                           grid_locator1=grid_locator1,
                           grid_locator2=grid_locator2,
@@ -290,6 +336,17 @@ class GridHelperCurveLinear(_GridHelperCurveLinear):
 
     def new_grid_helper_for_floating_axes(self):
         pass
+
+    # def update_lim(self, axes):
+    #     print("555")
+    #     return super().update_lim(axes)
+
+    def invalidate(self):
+        # update_lim method internally check if the xlim and ylim and skips if
+        # there have not changed. You should call invalidate method to force
+        # the update. This is required, for example, if you have changed the
+        # locator_params.
+        self._old_limits = None
 
 
 class Axes(_Axes):
@@ -428,6 +485,7 @@ class Axes(_Axes):
                           proj_name=None,
                           axes=None,
                           extreme_mode="host",
+                          ticklabel_angle_mode="axis",
                           ):
         if axes is None:
             if isinstance(self, ParasiteAxesBase):
@@ -439,8 +497,26 @@ class Axes(_Axes):
                                     axis_direction=axis_direction,
                                     axes=axes,
                                     extreme_mode="host",
+                                    ticklabel_angle_mode=ticklabel_angle_mode,
                                     )
         return axis
+
+    # This was deprecated in mpl3.6 and removed in mpl3.7. in the matplotlib,
+    # we just revive it.
+    def new_gridlines(self, grid_helper=None):
+        """
+        Create and return a new GridlineCollection instance.
+
+        *which* : "major" or "minor"
+        *axis* : "both", "x" or "y"
+
+        """
+        if grid_helper is None:
+            grid_helper = self.get_grid_helper()
+
+        gridlines = grid_helper.new_gridlines(self)
+        return gridlines
+
 
     def locator_params(self, axis='both', **kwargs):
 
@@ -458,7 +534,9 @@ class Axes(_Axes):
                 l = gh.grid_finder.grid_locator2
                 l.set_params(**kwargs)
 
-            self.stale = True
+            gh.invalidate()
+
+        self.stale = True
 
     # This may need to be a part of HostAxes
     def get_projected_axes(self, proj_name, axes_class=None):
@@ -514,7 +592,7 @@ class Axes(_Axes):
         grid_helper = self.get_grid_helper(proj_name).copy()
 
         ax = self._add_twin_axes(
-            axes_class, aux_transform=aux_trans, viewlim_mode="equal",
+            axes_class, aux_transform=aux_trans, viewlim_mode=None,
             boundary=extremes, grid_helper=grid_helper)
 
         # FIXME This is very hacky, but we reassign axis and gridlines. We
@@ -575,6 +653,11 @@ class FloatingParasiteAxes(ParasiteAxes):
             raise ValueError("FloatingAxes requires grid_helper argument")
         # if not hasattr(grid_helper, "get_boundary"):
         #     raise ValueError("grid_helper must implement get_boundary method")
+
+        # We need to force vewlim_mode of None, so that we can use set_xlim and
+        # set_ylim methods.
+        # kwargs["viewlim_mode"] = None
+        kwargs["autoscale_on"] = False
         super().__init__(*args, **kwargs)
         # self.set_aspect(1.)
 
@@ -606,6 +689,39 @@ class FloatingParasiteAxes(ParasiteAxes):
         self.patch.set_clip_path(orig_patch)
         # self.gridlines.set_clip_path(orig_patch)
 
+    def set_xlim(self, left=None, right=None, emit=True, auto=False,
+                 *, xmin=None, xmax=None):
+        print("viewmode", )
+        if right is None and np.iterable(left):
+            left, right = left
+        if xmin is not None:
+            if left is not None:
+                raise TypeError("Cannot pass both 'left' and 'xmin'")
+            left = xmin
+        if xmax is not None:
+            if right is not None:
+                raise TypeError("Cannot pass both 'right' and 'xmax'")
+            right = xmax
+
+        boundary = (left, right) + tuple(self._boundary[2:])
+        self.update_boundary(*boundary)
+
+    def set_ylim(self, bottom=None, top=None, emit=True, auto=False,
+                 *, ymin=None, ymax=None):
+        if top is None and np.iterable(bottom):
+            bottom, top = bottom
+        if ymin is not None:
+            if bottom is not None:
+                raise TypeError("Cannot pass both 'bottom' and 'ymin'")
+            bottom = ymin
+        if ymax is not None:
+            if top is not None:
+                raise TypeError("Cannot pass both 'top' and 'ymax'")
+            top = ymax
+
+        boundary = tuple(self._boundary[:2]) + (bottom, top)
+        self.update_boundary(*boundary)
+
     def update_boundary(self, left, right, bottom, top):
         # Since it parasite axes with viewLim synced to the host, changing the
         # boundary by overriding set_xlim and set_ylim does not work well.
@@ -634,6 +750,10 @@ class FloatingParasiteAxes(ParasiteAxes):
         host_ax.set_xlim(bbox.xmin, bbox.xmax)
         host_ax.set_ylim(bbox.ymin, bbox.ymax)
 
+    def add_artist(self, a):
+        super().add_artist(a)
+        print("add")
+        a.set_clip_box(self._parent_axes.bbox)
 
 def test1():
     import matplotlib.pyplot as plt
@@ -651,9 +771,9 @@ def test1():
 
     transform_from_rotated = transform_to_rotated.inverted()
 
-    # We create new parasite axes to draw a x-axis of the rotated axes. Note that
-    # the transData of this axes is still that of the original axes, and we cannot
-    # use it to draw histogram.
+    # We create new parasite axes to draw a x-axis of the rotated axes. Note
+    # that the transData of this axes is still that of the original axes, and
+    # we cannot use it to draw histogram.
 
 
     # helper = AA.GridHelperCurveLinear(transform_from_rotated)
@@ -689,7 +809,7 @@ def test1():
     # gh = ax.get_grid_helper("rotated")
 
     ax.locator_params(steps=[1., 5, 10], nbins=8)
-    ax_rotated.locator_params(steps=[1., 5, 10], nbins=8)
+    ax_rotated.locator_params(steps=[1., 5, 10], nbins=3)
 
     # ax.axis["right2"] = ax.new_fixed_axis("right", offset=(30, 0))
 
@@ -715,11 +835,13 @@ def test1():
     # ax_rotated.axis["y=2"].set_transform(ax.transData)
 
     # FIXME maybe we introduce axis.set_lim method?
-    ax_rotated.axis["y=2"].get_helper().set_extremes(0.5, 2) # limit its extents.
+    # ax_rotated.axis["y=2"].get_helper().set_extremes(0.5, 2) # limit its extents.
+    ax_rotated.axis["y=2"].set_lim(0.5, 2) # limit its extents.
 
     ax_rotated.axis["x=2"] = ax_rotated.new_floating_axis(0, 2,
                                                           "right")
-    ax_rotated.axis["x=2"].get_helper().set_extremes(1, 2.5) # limit its extents.
+    # ax_rotated.axis["x=2"].get_helper().set_extremes(1, 2.5) # limit its extents.
+    ax_rotated.axis["x=2"].set_lim(1, 2.5) # limit its extents.
     ax_rotated.axis["x=2"].set_axis_direction("right")
 
     # ax.new_floating_axis(proj_name, nth_coord=0, trail=trail, dir="left")
@@ -789,7 +911,11 @@ def test2():
     # instance so that the params does not affect other axes. For now, this
     # will override previous locator_params on the ax_rotated.
     ax_floating.locator_params(nbins=5)
-    ax_floating.update_boundary(0, 2, 1, 2)
+    # ax_floating.update_boundary(0, 2, 1, 2)
+    ax_floating.set_xlim(1, 2)
+    ax_floating.set_ylim(1, 2.5)
+    # ax_floating.set_ylim(1, 2.5)
+    # ax_floating.set_xlim(0, 1.5)
     ax_floating.patch.set_visible(True)
 
     # ax_floating.plot([0., 2.5], [0., 2.5], clip_on=False)
@@ -800,6 +926,7 @@ def test3():
     import matplotlib.pyplot as plt
     plt.clf()
     ax = plt.subplot(111, axes_class=HostAxes, aspect=1)
+    # ax.set_aspect(1)
 
     from matplotlib.transforms import Affine2D
     # We define transform from the original axes to the rotated one.
@@ -821,6 +948,10 @@ def test3():
     # ax.grid(True)
 
     ax_rotated = ax.get_projected_axes(proj_name)
+
+    ax.set_xlim(-0.5, 3)
+    ax.set_ylim(-0.5, 2.5)
+
     ax_rotated.locator_params(steps=[1, 2, 5, 10], nbins=10)
 
     ax_rotated.grid(color="r", alpha=0.2, zorder=0)
@@ -834,31 +965,6 @@ def test3():
 
     # ax_floating.locator_params(steps=[1., 5, 10], nbins=100)
 
-
-    # gh = ax_rotated.get_grid_helper()
-    # l = gh.grid_finder.grid_locator1
-    # l.set_params(steps=[1., 5,10])
-    # l.set_params(nbins=10)
-    # l = gh.grid_finder.grid_locator2
-    # l.set_params(steps=[1., 5, 10])
-    # l.set_params(nbins=10)
-
-    # Are tick locations cached for same axes data limits? If xlim ylim is
-    # changed early in the code, the above set_params is reflected only for the
-    # floating axes, not for the rotated axes.
-    ax.set_xlim(-0.5, 3)
-    ax.set_ylim(-0.5, 2.5)
-
-    ax.set_aspect(1)
-
-    # ax_floating.plot([0., 2], [0., 2.])
-    # f1 = ax.fill_between(x, y1=y)
-    # if True:
-    #     from mpl_visual_context.image_box_effect import BboxImagePathEffect
-    #     pe_f1 = BboxImagePathEffect("vertical", coords=f1)
-    #     f1.set_path_effects([pe_f1])
-
-
     # for the floating axes, it would be better to have a separate grid_helper
     # instance so that the params does not affect other axes. For now, this
     # will override previous locator_params on the ax_rotated.
@@ -869,9 +975,13 @@ def test3():
     # ax_floating.plot([0., 2.5], [0., 2.5], clip_on=False)
 
 
-    f1 = ax_floating.fill_between([0., 2], [0., 2.])
+    f1 = ax_floating.fill_between([0., 2], [0., 4.], alpha=0.2)
+
+    # FIXME This should be automatically done.
+    # f1.set_clip_box(ax.bbox)
+
     im = ax_floating.imshow(np.arange(10).reshape((10, 1)), extent=[0, 2, 0, 2],
-                            origin="lower", interpolation="bilinear")
+                            origin="lower", interpolation="none")
     # im.remove()
 
     # from mpl_visual_context.image_box_effect import BboxImageEffect
@@ -915,16 +1025,16 @@ def test4():
     # im.remove()
     # im.axes = ax_rotated
 
-    from mpl_visual_context.image_box_effect import GradientEffect
+    # from mpl_visual_context.image_box_effect import GradientEffect
+    from mpl_visual_context.patheffects import AlphaGradient
 
-    f1.set_path_effects([GradientEffect("up", f1, alpha="up")])
+    f1.set_path_effects([AlphaGradient("up")])
 
     ax.set(xlim=(0, 3), ylim=(0, 4))
 
     plt.show()
 
-# def test5():
-if True:
+def test5():
     from matplotlib.transforms import Affine2D
     # import mpl_toolkits.axisartist.floating_axes as floating_axes
     import numpy as np
